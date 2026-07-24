@@ -3,13 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>우리 동네 인구</title>
+<title>우리 동네 인구 피라미드</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;
+       max-width:560px;margin:0 auto;padding:20px;color:#222;}
+  h1{font-size:20px;}
+  input{width:100%;font-size:16px;padding:9px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;}
+  #sub{font-size:15px;margin-bottom:6px;} #sub b{font-size:17px;}
+  #py{width:100%;}
+</style>
 </head>
 <body>
-  <h1>우리 동네 인구</h1>
-  <input id="q" list="regions" placeholder="동네 이름 입력 (예: 서울특별시 종로구)" style="width:100%;max-width:360px;padding:8px;font-size:16px;">
+  <h1>🏘️ 우리 동네 인구 피라미드</h1>
+  <input id="q" list="regions" placeholder="동네 이름 입력 (예: 서울특별시 종로구)">
   <datalist id="regions"></datalist>
-  <div id="app">데이터 불러오는 중…</div>
+  <div id="sub">데이터 불러오는 중…</div>
+  <div id="py"></div>
 
 <script>
 const 기본지역 = "서울특별시 종로구"; // ← 보고 싶은 지역으로 바꿔도 돼요
@@ -21,44 +31,63 @@ const num = s => parseInt(String(s).replace(/[^0-9-]/g,''),10) || 0;   // 따옴
 function parseCSV(line){const o=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"'){if(q&&line[i+1]==='"'){c+='"';i++;}else q=!q;}else if(ch===','&&!q){o.push(c);c='';}else c+=ch;}o.push(c);return o;}
 const cleanName = s => s.replace(/\s*\(\d+\)\s*$/,'').replace(/\s+/g,' ').trim();  // "서울…종로구 (1111…)" → "서울…종로구"
 
-// 한 지역의 남/여/총 인구 합계
-function sums(cells){
-  let male=0, female=0;
+// 연령별(0~100세) 남/여 인구
+function ageBySex(cells){
+  const m = new Array(101).fill(0), f = new Array(101).fill(0);
   for(let i=1;i<HEADER.length;i++){
-    if(!/_(\d+)세/.test(HEADER[i])) continue;   // 나이 열만(총인구수·연령구간 제외)
-    const v = num(cells[i]);
-    if(HEADER[i].includes('_남_')) male+=v;
-    else if(HEADER[i].includes('_여_')) female+=v;   // _계_ 무시
+    const mm = HEADER[i].match(/_(\d+)세/); if(!mm) continue;   // 총인구수·연령구간 열은 건너뜀
+    const a = Math.min(100, +mm[1]);
+    if(HEADER[i].includes('_남_')) m[a]+=num(cells[i]);
+    else if(HEADER[i].includes('_여_')) f[a]+=num(cells[i]);    // _계_ 열은 무시(남+여만)
   }
-  return { male, female, total: male+female };
+  return { m, f };
+}
+
+// Plotly 인구 피라미드 (1세 단위)
+function drawPyramid(m, f){
+  const ages=Array.from({length:101},(_,i)=>i);   // 0~100세(100+) 1세 단위
+  const mx=Math.max(...m,...f,1);
+  const step=Math.max(500, Math.ceil(mx/4/500)*500), lim=Math.ceil(mx/step)*step;
+  const tv=[]; for(let v=-lim; v<=lim; v+=step) tv.push(v);
+  Plotly.react('py',[
+    {y:ages,x:m.map(v=>-v),name:'남자',type:'bar',orientation:'h',marker:{color:'#4C8DF6'},
+     customdata:m,hovertemplate:'%{y}세 · 남 %{customdata:,}명<extra></extra>'},
+    {y:ages,x:f,name:'여자',type:'bar',orientation:'h',marker:{color:'#F4789B'},
+     hovertemplate:'%{y}세 · 여 %{x:,}명<extra></extra>'}
+  ],{
+    barmode:'relative', bargap:0.15, height:560, margin:{l:46,r:14,t:6,b:28},
+    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
+    font:{family:'-apple-system,"Malgun Gothic",sans-serif',size:12,color:'#333'},
+    legend:{orientation:'h',x:0.5,xanchor:'center',y:1.03},
+    xaxis:{tickvals:tv,ticktext:tv.map(v=>Math.abs(v).toLocaleString()),zeroline:true,zerolinecolor:'#ccc',gridcolor:'rgba(0,0,0,.06)',fixedrange:true},
+    yaxis:{dtick:10,ticksuffix:'세',range:[-0.6,100.6],fixedrange:true}
+  },{displayModeBar:false,responsive:true});
 }
 
 function show(name){
-  const cells = INDEX[name];
-  if(!cells){ document.getElementById('app').textContent = '그 지역을 못 찾았어요. 목록에서 골라보세요.'; return; }
-  const {male,female,total} = sums(cells);
-  document.getElementById('app').innerHTML =
-    `<h2>${name}</h2>
-     <p>총인구: <b>${total.toLocaleString()}</b>명</p>
-     <p>남자 ${male.toLocaleString()}명 · 여자 ${female.toLocaleString()}명</p>`;
+  const cells = INDEX[name]; if(!cells) return;
+  const {m,f} = ageBySex(cells);
+  const total = m.reduce((a,b)=>a+b,0) + f.reduce((a,b)=>a+b,0);
+  document.getElementById('sub').innerHTML = `<b>${name}</b> · 총 ${total.toLocaleString()}명`;
+  drawPyramid(m, f);
 }
 
 (async ()=>{
   const buf = await (await fetch(DATA_URL)).arrayBuffer();
   const text = new TextDecoder('euc-kr').decode(buf);   // 행안부 원본은 cp949 인코딩
   const lines = text.trim().split(/\r?\n/);
-  HEADER = parseCSV(lines[0]);                // 첫 줄은 열 이름
+  HEADER = parseCSV(lines[0]);
   const dl = document.getElementById('regions');
   lines.slice(1).forEach(line=>{
     const cells = parseCSV(line); const name = cleanName(cells[0]);
-    INDEX[name] = cells;                      // 지역명으로 찾을 수 있게 저장
+    INDEX[name] = cells;
     const o = document.createElement('option'); o.value = name; dl.appendChild(o);
   });
   const q = document.getElementById('q');
   q.value = 기본지역;
   q.addEventListener('input', ()=>{ if(INDEX[q.value]) show(q.value); });
   show(기본지역);
-})().catch(e=>document.getElementById('app').textContent = '⚠️ ' + e.message);
+})().catch(e=>document.getElementById('sub').textContent = '⚠️ ' + e.message);
 </script>
 </body>
 </html>
